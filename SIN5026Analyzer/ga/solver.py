@@ -35,6 +35,10 @@ class Solver:
     def base_dir(self):
         return self.__temp_dir.name
 
+    @property
+    def temp_path(self):
+        return self.__temp_dir.name
+
     def __init__(self, data_file_path: str):
         self.__data_file_path = data_file_path
         self.__temp_dir = TemporaryDirectory()
