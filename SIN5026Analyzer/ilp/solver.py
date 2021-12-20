@@ -111,6 +111,7 @@ class Solver:
                     }
                 )
         self.__results_df = pd.DataFrame(to_send)
+        self.__results_df = self.__results_df[self.__results_df['requested'] > 0][['client', 'product', 'requested', 'sent', 'missing']].sort_values(by=['client', 'product'])
 
     def __read_csv(self, orders_path: str, clients_path: str, products_path: str, stock_path: str):
         """
