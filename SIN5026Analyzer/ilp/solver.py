@@ -18,7 +18,6 @@ class Solver:
     # Solver specific
     model = None
     x = None
-    missing = None
     constraints = list()
     __results_df = None
 
@@ -44,11 +43,18 @@ class Solver:
 
     def solve(self, verbose: bool = False):
         """
-        Actually tries to solve the problem via ILP
+        The problem it tries to solve, is stated as:
+
+        Let 𝑐 be the client present in 𝐶 = {1, 2, 3, ...𝑐..., 𝑛}, 𝑝 be the product
+        present in 𝑃 = {1, 2, 3, ...𝑝..., 𝑚} and 𝑂 𝑐𝑝 is the amount that the
+        client 𝑐 originally requested for product 𝑝. Considering that, at the
+        beginning of the execution there’s a stock 𝑆 𝑝 of product 𝑝 that is
+        known and fixed, the priority 𝜙 𝑐 is the tier priority of the client
+        and 𝜙 𝑝 is the tier priority of the product. We need to maximize the
+        amount sent of each 𝑂 𝑐𝑝 , while respecting 𝜙 𝑐 and 𝜙 𝑝 and utilizing
+        at most 𝑆 𝑝 amount for each product.
 
         :param verbose: If set to True, it'll output the default Gurobi log on the terminal, if set to False it'll suppress the output
-
-        :todo: Add a detailed Markdown description of the solution
         """
         log.info('Solving via Gurobi')
         log.debug('Configuring the Environment')
@@ -68,26 +74,74 @@ class Solver:
         log.info('Done')
 
     def __configure_solver(self):
-        """Configure the solver by creating the variables, the constraints and the objective"""
+        """
+        Configure the solver by creating the variables, the constraints and the objective
+
+        The variable we have, is a simple Theta_{cp} that represents the amount to be sent. We are using x in order to ease programing readability.
+
+        For constraints, we have some:
+
+        Everything is in the natural realm
+
+        .. math::
+            c \in \mathbb{N}
+
+            p \in \mathbb{N}
+
+            O_{cp} \in \mathbb{N}
+
+            \Theta_{cp} \in \mathbb{N}
+
+        We must sent exactly 0 or more, and it has to be less than what was requested:
+
+        .. math::
+            \Theta_{cp} \geq 0
+
+            \Theta_{cp} \leq O_{cp}
+
+        The priorities (client and product) must be between 0 and 1
+
+        .. math::
+            0 > \phi_c \leq 1
+
+            0 > \phi_p \leq 1
+
+        And the objective is to maximize the result of the priority of the client, multiplied by every product we are sending, multiplied by each product priority being sent,
+        without exceeding the amount available on the stock:
+
+        .. math::
+            MAX \phi_c\sum_{p=1}^{m}{\Theta_{cp}\phi_p} \leq S_{p} \;\; for\;all\;c\;\in C
+
+        The priority of each order is calculated on the GA package, exactly as shown here (client priority * sum of all requested (products * their priorities) )
+        """
         log.info('Configuring solver')
         log.debug('Creating variables')
         self.x = self.model.addVars(self.orders, name='orders')
-        self.missing = self.model.addVars(self.orders, name='missing')  # I don't believe that this is useful, maybe remove it?
         log.debug('Adding constraints')
-        self.constraints.append(self.model.addConstrs((self.x.sum('*', key) + self.missing.sum('*', key) <= value for key, value in self.available.items()),
+        # Each product to be sent must be less than the available stock
+        self.constraints.append(self.model.addConstrs((self.x.sum('*', key) <= value for key, value in self.available.items()),
                                                       'stock'))
+
+        # Each product to be sent must be less than the product requested, but positive
         name_idx = -1
         for product in self.products:
             for idx in range(len(self.clients)):
                 name_idx += 1
                 self.constraints.append(
                     self.model.addConstr(
-                        self.x.select('*', product)[idx] + self.missing.select('*', product)[idx] <= self.requested.select('*', product)[idx],
+                        self.x.select('*', product)[idx] <= self.requested.select('*', product)[idx],
                         name=f'requested_{name_idx}'
                     )
                 )
+                self.constraints.append(
+                    self.model.addConstr(
+                        self.x.select('*', product)[idx] >= 0,
+                        name=f'requested_geq_0_{name_idx}'
+                    )
+                )
         log.debug('Configuring objective')
-        self.model.setObjective(self.x.prod(self.priority) - self.missing.prod(self.priority), GRB.MAXIMIZE)
+        # The priority is calculated offline when reading the requests, this eases the programing
+        self.model.setObjective(self.x.prod(self.priority), GRB.MAXIMIZE)
         log.info('Done')
 
     def __create_results_df(self):
@@ -121,6 +175,9 @@ class Solver:
         :param clients_path: The clients.csv path as created by the generator
         :param products_path: the products.csv path as created by the generator
         :param stock_path: the stock.csv path as created by the generator
+
+        .. note::
+            The order priority is actually calculated during the GA setup, and we use the same order priority as depicted on the maximization function to work with
         """
         log.info('Reading information from files:')
         log.info(f'- Clients  : {clients_path}')
